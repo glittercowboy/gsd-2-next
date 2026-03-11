@@ -78,7 +78,7 @@ export function loadStoredEnvKeys(authStorage: AuthStorage): void {
   for (const [provider, envVar] of providers) {
     if (!process.env[envVar]) {
       const cred = authStorage.get(provider)
-      if (cred?.type === 'api_key') {
+      if (cred?.type === 'api_key' && cred.key) {
         process.env[envVar] = cred.key as string
       }
     }
@@ -167,6 +167,7 @@ export async function runWizardIfNeeded(authStorage: AuthStorage): Promise<void>
       process.stdout.write(`  ${green}✓${reset} ${key.label} saved\n\n`)
       savedCount++
     } else {
+      authStorage.set(key.provider, { type: 'api_key', key: '' })
       process.stdout.write(`  ${dim}↷  ${key.label} skipped${reset}\n\n`)
     }
   }
