@@ -53,9 +53,19 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",
+    "@gsd/pi-agent-core": "*",
+    "@gsd/pi-ai": "*",
+    "@gsd/pi-coding-agent": "*",
+    "@gsd/pi-tui": "*",
     "picocolors": "^1.1.1",
     "playwright": "^1.58.2"
   },
+  "bundleDependencies": [
+    "@gsd/pi-agent-core",
+    "@gsd/pi-ai",
+    "@gsd/pi-coding-agent",
+    "@gsd/pi-tui"
+  ],
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.4.0"
