@@ -418,12 +418,24 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		try {
 			const ver = (await runMcporter(["--version"], undefined, 5000)).trim();
-		ctx.ui.notify(`MCPorter ${ver} ready`, "info");
+			ctx.ui.notify(`MCPorter ${ver} ready`, "info");
 		} catch {
-			ctx.ui.notify(
-				"MCPorter not found. Install with: npm i -g mcporter",
-				"error",
-			);
+			ctx.ui.notify("MCPorter not found — attempting auto-install…", "warning");
+			try {
+				await new Promise<void>((resolve, reject) => {
+					exec("npm install -g mcporter", { timeout: 60000 }, (err) => {
+						if (err) reject(err);
+						else resolve();
+					});
+				});
+				const ver = (await runMcporter(["--version"], undefined, 5000)).trim();
+				ctx.ui.notify(`MCPorter ${ver} auto-installed ✓`, "info");
+			} catch {
+				ctx.ui.notify(
+					"MCPorter auto-install failed. Install manually: npm i -g mcporter",
+					"error",
+				);
+			}
 		}
 	});
 }

@@ -1095,7 +1095,7 @@ async function configureNotifications(ctx: ExtensionCommandContext, prefs: Recor
 
   for (const field of notifFields) {
     const current = notif[field.key];
-    const currentStr = current !== undefined ? String(current) : "";
+    const currentStr = current !== undefined && typeof current === "boolean" ? String(current) : "";
     const choice = await ctx.ui.select(
       `${field.label}${currentStr ? ` (current: ${currentStr})` : ` (default: ${field.defaultVal})`}:`,
       ["true", "false", "(keep current)"],
