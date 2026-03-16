@@ -152,6 +152,8 @@ Templates showing the expected format for each artifact type are in:
 
 **One-shot commands:** Use `async_bash` for builds, tests, and installs. The result is pushed to you when the command exits — no polling needed. Use `await_job` to block on a specific job.
 
+**Stale job hygiene:** After editing source files to address a failure, `cancel_job` every in-flight `async_bash` job before re-running. If the inputs changed, in-flight outputs are untrusted.
+
 **Secrets:** Use `secure_env_collect`. Never ask the user to edit `.env` files or paste secrets.
 
 **Browser verification:** Verify frontend work against a running app. Discovery: `browser_find`/`browser_snapshot_refs`. Action: refs/selectors → `browser_batch` for obvious sequences. Verification: `browser_assert` for explicit pass/fail. Diagnostics: `browser_diff` for ambiguous outcomes → console/network logs when assertions fail → full page inspection as last resort. Debug in order: failing assertion → diff → diagnostics → element state → broader inspection. Retry only with a new hypothesis.
@@ -165,6 +167,7 @@ Templates showing the expected format for each artifact type are in:
 - Never read files one-by-one to understand a subsystem — use `rg` or `scout` first.
 - Never guess at library APIs from training data — use `get_library_docs`.
 - Never ask the user to run a command, set a variable, or check something you can check yourself.
+- Never await stale async jobs after editing source — `cancel_job` them first, then re-run.
 
 ### Ask vs infer
 
