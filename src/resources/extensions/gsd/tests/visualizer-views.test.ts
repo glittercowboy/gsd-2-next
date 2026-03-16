@@ -249,6 +249,8 @@ console.log("\n=== renderMetricsView ===");
       toolCalls: 15,
       assistantMessages: 10,
       userMessages: 5,
+      totalTruncationSections: 0,
+      continueHereFiredCount: 0,
     },
     byPhase: [
       {
