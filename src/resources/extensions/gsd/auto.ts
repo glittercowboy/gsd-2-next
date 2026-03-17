@@ -2013,6 +2013,7 @@ async function dispatchNextUnit(
   pi: ExtensionAPI,
 ): Promise<void> {
   if (!active || !cmdCtx) {
+    debugLog(`dispatchNextUnit early return — active=${active}, cmdCtx=${!!cmdCtx}`);
     if (active && !cmdCtx) {
       ctx.ui.notify("Auto-mode session expired. Run /gsd auto to restart.", "info");
     }
@@ -2022,6 +2023,7 @@ async function dispatchNextUnit(
   // Reentrancy guard: allow recursive calls from skip paths (_skipDepth > 0)
   // but block concurrent external calls (watchdog, step wizard, etc.)
   if (_dispatching && _skipDepth === 0) {
+    debugLog("dispatchNextUnit reentrancy guard — another dispatch in progress, bailing");
     return; // Another dispatch is in progress — bail silently
   }
   _dispatching = true;
