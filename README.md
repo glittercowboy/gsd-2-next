@@ -18,7 +18,7 @@ One command. Walk away. Come back to a built project with clean git history.
 
 <pre><code>npm install -g gsd-pi@latest</code></pre>
 
-> **📋 NOTICE: New to Node on Mac?** If you installed Node.js via Homebrew, you may be running a development release instead of LTS. **[Read this guide](./docs/node-lts-macos.md)** to pin Node 24 LTS and avoid compatibility issues.
+> **📋 NOTICE: New to Node on Mac?** If you installed Node.js via Homebrew, you may be running a development release instead of LTS. Pin Node 24 LTS to avoid compatibility issues.
 
 </div>
 
@@ -41,30 +41,6 @@ One command. Walk away. Come back to a built project with clean git history.
 See the full [Changelog](./CHANGELOG.md) for details.
 
 ---
-
-## Documentation
-
-Full documentation is available in the [`docs/`](./docs/) directory:
-
-- **[Getting Started](./docs/getting-started.md)** — install, first run, basic usage
-- **[Auto Mode](./docs/auto-mode.md)** — autonomous execution deep-dive
-- **[Configuration](./docs/configuration.md)** — all preferences, models, git, and hooks
-- **[Token Optimization](./docs/token-optimization.md)** — profiles, context compression, complexity routing
-- **[Cost Management](./docs/cost-management.md)** — budgets, tracking, projections
-- **[Git Strategy](./docs/git-strategy.md)** — worktree isolation, branching, merge behavior
-- **[Parallel Orchestration](./docs/parallel-orchestration.md)** — run multiple milestones simultaneously
-- **[Working in Teams](./docs/working-in-teams.md)** — unique IDs, shared artifacts
-- **[Skills](./docs/skills.md)** — bundled skills, discovery, custom authoring
-- **[Commands Reference](./docs/commands.md)** — all commands and keyboard shortcuts
-- **[Architecture](./docs/architecture.md)** — system design and dispatch pipeline
-- **[Troubleshooting](./docs/troubleshooting.md)** — common issues, doctor, forensics, recovery
-- **[CI/CD Pipeline](./docs/ci-cd-pipeline.md)** — three-stage promotion pipeline (Dev → Test → Prod)
-- **[VS Code Extension](./vscode-extension/README.md)** — chat participant, sidebar dashboard, RPC integration
-- **[Visualizer](./docs/visualizer.md)** — workflow visualizer with stats and discussion status
-- **[Remote Questions](./docs/remote-questions.md)** — route decisions to Slack or Discord when human input is needed
-- **[Dynamic Model Routing](./docs/dynamic-model-routing.md)** — complexity-based model selection and budget pressure
-- **[Pipeline Simplification (ADR-003)](./docs/ADR-003-pipeline-simplification.md)** — merged research into planning, mechanical completion
-- **[Migration from v1](./docs/migration.md)** — `.planning` → `.gsd` migration
 
 ---
 
@@ -280,7 +256,7 @@ gsd headless query
 gsd headless dispatch plan
 ```
 
-Headless auto-responds to interactive prompts, detects completion, and exits with structured codes: `0` complete, `1` error/timeout, `2` blocked. Auto-restarts on crash with exponential backoff. Use `gsd headless query` for instant, machine-readable state inspection — returns phase, next dispatch preview, and parallel worker costs as a single JSON object without spawning an LLM session. Pair with [remote questions](./docs/remote-questions.md) to route decisions to Slack or Discord when human input is needed.
+Headless auto-responds to interactive prompts, detects completion, and exits with structured codes: `0` complete, `1` error/timeout, `2` blocked. Auto-restarts on crash with exponential backoff. Use `gsd headless query` for instant, machine-readable state inspection — returns phase, next dispatch preview, and parallel worker costs as a single JSON object without spawning an LLM session. Pair with the Remote Questions extension to route decisions to Slack or Discord when human input is needed.
 
 **Multi-session orchestration** — headless mode supports file-based IPC in `.gsd/parallel/` for coordinating multiple GSD workers across milestones. Build orchestrators that spawn, monitor, and budget-cap a fleet of GSD workers.
 
@@ -481,32 +457,27 @@ token_profile: budget      # or balanced (default), quality
 
 **Budget pressure** graduates model downgrading as you approach your budget ceiling — 50%, 75%, and 90% thresholds progressively shift work to cheaper tiers.
 
-See the full [Token Optimization Guide](./docs/token-optimization.md) for details.
+See `/gsd prefs` for configuration details.
 
 ### Bundled Tools
 
-GSD ships with 19 extensions, all loaded automatically:
+GSD ships with 14 bundled extensions. Additional extensions are available in `plugins/extensions/`.
 
 | Extension              | What it provides                                                                                                       |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **GSD**                | Core workflow engine, auto mode, commands, dashboard                                                                   |
-| **Browser Tools**      | Playwright-based browser with form intelligence, intent-ranked element finding, semantic actions, PDF export, session state persistence, network mocking, device emulation, structured extraction, visual diffing, region zoom, test code generation, and prompt injection detection |
+| **Browser Tools**      | Playwright-based browser with form intelligence, semantic actions, PDF export, visual diffing, test generation          |
 | **Search the Web**     | Brave Search, Tavily, or Jina page extraction                                                                          |
-| **Google Search**      | Gemini-powered web search with AI-synthesized answers                                                                  |
 | **Context7**           | Up-to-date library/framework documentation                                                                             |
 | **Background Shell**   | Long-running process management with readiness detection                                                               |
 | **Async Jobs**         | Background bash commands with job tracking and cancellation                                                            |
 | **Subagent**           | Delegated tasks with isolated context windows                                                                          |
-| **GitHub**             | Full-suite GitHub issues and PR management via `/gh` command                                                           |
-| **Mac Tools**          | macOS native app automation via Accessibility APIs                                                                     |
+| **GitHub Sync**        | GitHub Issues/PRs/Milestones auto-sync                                                                                 |
 | **MCP Client**         | Native MCP server integration via @modelcontextprotocol/sdk                                                            |
-| **Voice**              | Real-time speech-to-text transcription (macOS, Linux — Ubuntu 22.04+)                                                  |
 | **Slash Commands**     | Custom command creation                                                                                                |
 | **Ask User Questions** | Structured user input with single/multi-select                                                                         |
-| **Secure Env Collect** | Masked secret collection without manual .env editing                                                                   |
 | **Remote Questions**   | Route decisions to Slack/Discord when human input is needed in headless/CI mode                                         |
-| **Universal Config**   | Discover and import MCP servers and rules from other AI coding tools                                                    |
-| **AWS Auth**           | Automatic Bedrock credential refresh for AWS-hosted models                                                              |
+| **cmux**               | Terminal multiplexer integration for sidebar status and notifications                                                   |
 | **TTSR**               | Tool-use type-safe runtime validation                                                                                   |
 
 ### Bundled Agents
