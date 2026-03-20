@@ -22,7 +22,7 @@ import { join, sep as pathSep } from "node:path";
 import { homedir } from "node:os";
 import { safeCopy, safeCopyRecursive } from "./safe-fs.js";
 
-const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsdev");
 
 // ─── Project Root → Worktree Sync ─────────────────────────────────────────
 

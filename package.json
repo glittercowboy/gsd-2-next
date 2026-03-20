@@ -30,8 +30,8 @@
     "README.md"
   ],
   "piConfig": {
-    "name": "gsd",
-    "configDir": ".gsd"
+    "name": "gsdev",
+    "configDir": ".gsdev"
   },
   "engines": {
     "node": ">=22.0.0"
