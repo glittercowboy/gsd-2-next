@@ -1,5 +1,5 @@
 {
-  "name": "gsd-pi",
+  "name": "gsd-pi-dev",
   "version": "2.38.0",
   "description": "GSD — Get Shit Done coding agent",
   "license": "MIT",
@@ -17,8 +17,8 @@
     "studio"
   ],
   "bin": {
-    "gsd": "dist/loader.js",
-    "gsd-cli": "dist/loader.js"
+    "gsdev": "dist/loader.js",
+    "gsdev-cli": "dist/loader.js"
   },
   "files": [
     "dist",
