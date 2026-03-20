@@ -139,7 +139,6 @@ function getGsdArgumentCompletions(prefix: string) {
       { cmd: "status", desc: "Show effective preferences" },
       { cmd: "wizard", desc: "Interactive preferences wizard" },
       { cmd: "setup", desc: "First-time preferences setup" },
-      { cmd: "import-claude", desc: "Import settings from Claude Code" },
     ], "prefs");
   }
 
