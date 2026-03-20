@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
-const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsdev");
 
 // ─── Types (mirrored from extension-registry.ts) ────────────────────────────
 

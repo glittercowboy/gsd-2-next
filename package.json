@@ -16,8 +16,8 @@
     "packages/*"
   ],
   "bin": {
-    "gsd": "dist/loader.js",
-    "gsd-cli": "dist/loader.js"
+    "gsdev": "dist/loader.js",
+    "gsdev-cli": "dist/loader.js"
   },
   "files": [
     "dist",
@@ -30,8 +30,8 @@
     "README.md"
   ],
   "piConfig": {
-    "name": "gsd",
-    "configDir": ".gsd"
+    "name": "gsdev",
+    "configDir": ".gsdev"
   },
   "engines": {
     "node": ">=22.0.0"

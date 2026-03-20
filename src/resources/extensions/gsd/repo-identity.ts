@@ -12,7 +12,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, s
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsdev");
 
 // ─── Repo Identity ──────────────────────────────────────────────────────────
 

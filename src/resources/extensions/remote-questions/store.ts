@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { RemotePrompt, RemotePromptRecord, RemotePromptRef, RemoteAnswer, RemotePromptStatus } from "./types.js";
 
-const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsdev");
 
 function runtimeDir(): string {
   return join(gsdHome, "runtime", "remote-questions");

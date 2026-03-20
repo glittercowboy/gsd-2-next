@@ -112,7 +112,7 @@ export function describeCredential(cred: AuthCredential): string {
  * Get the auth.json path.
  */
 export function getAuthPath(): string {
-  return join(process.env.HOME ?? "~", ".gsd", "agent", "auth.json");
+  return join(process.env.GSD_HOME || join(process.env.HOME ?? "~", ".gsdev"), "agent", "auth.json");
 }
 
 /**

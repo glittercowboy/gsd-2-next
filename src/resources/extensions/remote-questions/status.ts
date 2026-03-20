@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { readPromptRecord } from "./store.js";
 
-const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsdev");
 
 export interface LatestPromptSummary {
   id: string;
