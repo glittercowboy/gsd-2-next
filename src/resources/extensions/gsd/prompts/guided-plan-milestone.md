@@ -1,30 +1,17 @@
-Plan milestone {{milestoneId}} ("{{milestoneTitle}}"). Read `.gsd/DECISIONS.md` if it exists — respect existing decisions. Read `.gsd/REQUIREMENTS.md` if it exists and treat Active requirements as the capability contract. If `REQUIREMENTS.md` is missing, continue in legacy compatibility mode but explicitly note missing requirement coverage. Use the **Roadmap** output template below. Create `{{milestoneId}}-ROADMAP.md` in the milestone directory with slices, risk levels, dependencies, demo sentences, verification classes, milestone definition of done, requirement coverage, and a boundary map. Write success criteria as observable truths, not implementation tasks. If the milestone crosses multiple runtime boundaries, include an explicit final integration slice that proves the assembled system works end-to-end in a real environment. If planning produces structural decisions, append them to `.gsd/DECISIONS.md`. If a `GSD Skill Preferences` block is present in system context, use it to decide which skills to load and follow during planning, without overriding required roadmap formatting.
+Plan milestone {{milestoneId}} ("{{milestoneTitle}}"). Read `.gsd/DECISIONS.md` if it exists and respect existing decisions. Read `.gsd/REQUIREMENTS.md` if it exists and treat Active requirements as the capability contract. Use the Roadmap output template below and write `{{milestoneId}}-ROADMAP.md` in the milestone directory.
 
-## Requirement Rules
+Plan only as much ceremony as the work needs. Explore enough code and context to ground the roadmap in reality, then write slices that retire meaningful risks or deliver meaningful capability. Avoid fake proof and avoid fake verticality: enabling slices are valid when they unblock real work, but the roadmap as a whole must still make the milestone outcome true at the proof level claimed.
 
-- Every relevant Active requirement must be mapped to a slice, deferred, blocked with reason, or moved out of scope.
-- Each requirement gets one primary owner and may have supporting slices.
-- Surface orphaned Active requirements instead of silently ignoring them.
-- Product-facing milestones should cover launchability, primary user loop, continuity, and failure visibility when relevant.
+Roadmap requirements:
 
-## Planning Doctrine
+- every relevant Active requirement must be mapped to a slice, deferred, blocked with reason, or moved out of scope
+- each requirement gets one primary owner and may have supporting slices
+- write success criteria as observable truths, not implementation tasks
+- include an integration slice only when the milestone genuinely crosses runtime boundaries and needs live assembled proof
+- use `depends:[S01,S02]`, never range syntax
 
-- **Risk-first means proof-first.** The earliest slices should prove the hardest thing works by shipping the real feature through the uncertain path. If auth is the risk, the first slice ships a real login page with real session handling that a user can actually use — not a CLI command that returns "authenticated: true". Proof is the shipped feature working. There is no separate "proof" artifact. Do not plan spikes, proof-of-concept slices, or validation-only slices — the proof is the real feature, built through the risky path.
-- **Every slice is vertical, demoable, and shippable.** Every slice ships real, user-facing functionality. "Demoable" means you could show a stakeholder and they'd see real product progress — not a developer showing a terminal command. If the only way to demonstrate the slice is through a test runner or a curl command, the slice is missing its UI/UX surface. Add it. A slice that only proves something but doesn't ship real working code is not a slice — restructure it.
-- **Brownfield bias.** When planning against an existing codebase, ground slices in existing modules, conventions, and seams. Prefer extending real patterns over inventing new ones.
-- **Each slice should establish something downstream slices can depend on.** Think about what stable surface this slice creates for later work — an API, a data shape, a proven integration path.
-- **Avoid foundation-only slices.** If a slice doesn't produce something demoable end-to-end, it's probably a layer, not a vertical slice. Restructure it.
-- **Verification-first.** When planning slices, know what "done" looks like before detailing implementation. Each slice's demo line should describe concrete, verifiable evidence — not vague "it works" claims.
-- **Plan for integrated reality, not just local proof.** Distinguish contract proof from live integration proof. If the milestone involves multiple runtime boundaries, one slice must explicitly prove the assembled system through the real entrypoint or runtime path.
-- **Truthful demo lines only.** If a slice is proven by fixtures or tests only, say so. Do not phrase harness-level proof as if the user can already perform the live end-to-end behavior unless that has actually been exercised.
-- **Completion must imply capability.** If every slice in this roadmap were completed exactly as written, the milestone's promised outcome should actually work at the proof level claimed. Do not write slices that can all be checked off while the user-visible capability still does not exist.
-- **Don't invent risks.** If the project is straightforward, skip the proof strategy and just ship value in smart order. Not everything has major unknowns.
-- **Ship features, not proofs.** A completed slice should leave the product in a state where the new capability is actually usable through its real interface. A login flow slice ends with a working login page, not a middleware function. An API slice ends with endpoints that return real data from a real store, not hardcoded fixtures. A dashboard slice ends with a real dashboard rendering real data, not a component that renders mock props. If a slice can't ship the real thing yet because a dependency isn't built, it should ship with realistic stubs that are clearly marked for replacement — but the user-facing surface must be real.
-- **Ambition matches the milestone.** The number and depth of slices should match the milestone's ambition. A milestone promising "core platform with auth, data model, and primary user loop" should have enough slices to actually deliver all three as working features — not two proof-of-concept slices and a note that "the rest will come in the next milestone." If the milestone's context promises an outcome, the roadmap must deliver it.
+If planning produces structural decisions, append them to `.gsd/DECISIONS.md`.
 
-## Secret Forecasting
-
-After writing the roadmap, analyze the slices and their boundary maps for external service dependencies (third-party APIs, SaaS platforms, cloud providers, databases requiring credentials, OAuth providers, etc.). If this milestone requires any external API keys or secrets, use the **Secrets Manifest** output template below for the expected format and write `{{secretsOutputPath}}` listing every predicted secret as an H3 section with the Service name, a direct Dashboard URL to the console page where the key is created, a Format hint showing what the key looks like, Status set to `pending`, and Destination (`dotenv`, `vercel`, or `convex`). Include numbered step-by-step guidance for obtaining each key. If this milestone does not require any external API keys or secrets, skip this step entirely — do not create an empty manifest.
-
+After writing the roadmap, inspect the slices for external credential needs. If this milestone requires external secrets, write `{{secretsOutputPath}}` using the Secrets Manifest template below. Otherwise skip it.
 
 {{inlinedTemplates}}
