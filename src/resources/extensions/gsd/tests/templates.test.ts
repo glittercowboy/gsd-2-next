@@ -61,6 +61,7 @@ const EXPECTED_TEMPLATES = [
   "requirements",
   "research",
   "roadmap",
+  "runtime",
   "secrets-manifest",
   "slice-context",
   "slice-summary",
