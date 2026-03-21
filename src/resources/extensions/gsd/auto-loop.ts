@@ -10,9 +10,9 @@
  * session rotation). No queue — stale agent_end events are dropped.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
+import { importExtensionModule, type ExtensionAPI, type ExtensionContext } from "@gsd/pi-coding-agent";
 
-import type { AutoSession } from "./auto/session.js";
+import type { AutoSession, SidecarItem } from "./auto/session.js";
 import { NEW_SESSION_TIMEOUT_MS } from "./auto/session.js";
 import type { GSDPreferences } from "./preferences.js";
 import type { SessionLockStatus } from "./session-lock.js";
@@ -26,6 +26,9 @@ import type {
 import type { DispatchAction } from "./auto-dispatch.js";
 import type { WorktreeResolver } from "./worktree-resolver.js";
 import { debugLog } from "./debug-logger.js";
+import { gsdRoot } from "./paths.js";
+import { atomicWriteSync } from "./atomic-write.js";
+import { join } from "node:path";
 import type { CmuxLogLevel } from "../cmux/index.js";
 
 /**
@@ -35,6 +38,8 @@ import type { CmuxLogLevel } from "../cmux/index.js";
  * generous headroom including retries and sidecar work.
  */
 const MAX_LOOP_ITERATIONS = 500;
+/** Maximum characters of failure/crash context included in recovery prompts. */
+const MAX_RECOVERY_CHARS = 50_000;
 
 /** Data-driven budget threshold notifications (descending). The 100% entry
  *  triggers special enforcement logic (halt/pause/warn); sub-100 entries fire
@@ -128,6 +133,63 @@ export function _resetPendingResolve(): void {
  */
 export function _setActiveSession(_session: AutoSession | null): void {
   // No-op — kept for test backward compatibility
+}
+
+// ─── detectStuck ─────────────────────────────────────────────────────────────
+
+type WindowEntry = { key: string; error?: string };
+
+/**
+ * Analyze a sliding window of recent unit dispatches for stuck patterns.
+ * Returns a signal with reason if stuck, null otherwise.
+ *
+ * Rule 1: Same error string twice in a row → stuck immediately.
+ * Rule 2: Same unit key 3+ consecutive times → stuck (preserves prior behavior).
+ * Rule 3: Oscillation A→B→A→B in last 4 entries → stuck.
+ */
+export function detectStuck(
+  window: readonly WindowEntry[],
+): { stuck: true; reason: string } | null {
+  if (window.length < 2) return null;
+
+  const last = window[window.length - 1];
+  const prev = window[window.length - 2];
+
+  // Rule 1: Same error repeated consecutively
+  if (last.error && prev.error && last.error === prev.error) {
+    return {
+      stuck: true,
+      reason: `Same error repeated: ${last.error.slice(0, 200)}`,
+    };
+  }
+
+  // Rule 2: Same unit 3+ consecutive times
+  if (window.length >= 3) {
+    const lastThree = window.slice(-3);
+    if (lastThree.every((u) => u.key === last.key)) {
+      return {
+        stuck: true,
+        reason: `${last.key} derived 3 consecutive times without progress`,
+      };
+    }
+  }
+
+  // Rule 3: Oscillation (A→B→A→B in last 4)
+  if (window.length >= 4) {
+    const w = window.slice(-4);
+    if (
+      w[0].key === w[2].key &&
+      w[1].key === w[3].key &&
+      w[0].key !== w[1].key
+    ) {
+      return {
+        stuck: true,
+        reason: `Oscillation detected: ${w[0].key} ↔ ${w[1].key}`,
+      };
+    }
+  }
+
+  return null;
 }
 
 // ─── runUnit ─────────────────────────────────────────────────────────────────
@@ -501,9 +563,9 @@ async function generateMilestoneReport(
   ctx: ExtensionContext,
   milestoneId: string,
 ): Promise<void> {
-  const { loadVisualizerData } = await import("./visualizer-data.js");
-  const { generateHtmlReport } = await import("./export-html.js");
-  const { writeReportSnapshot } = await import("./reports.js");
+  const { loadVisualizerData } = await importExtensionModule<typeof import("./visualizer-data.js")>(import.meta.url, "./visualizer-data.js");
+  const { generateHtmlReport } = await importExtensionModule<typeof import("./export-html.js")>(import.meta.url, "./export-html.js");
+  const { writeReportSnapshot } = await importExtensionModule<typeof import("./reports.js")>(import.meta.url, "./reports.js");
   const { basename } = await import("node:path");
 
   const snapData = await loadVisualizerData(s.basePath);
@@ -598,8 +660,10 @@ export async function autoLoop(
 ): Promise<void> {
   debugLog("autoLoop", { phase: "enter" });
   let iteration = 0;
-  let lastDerivedUnit = "";
-  let sameUnitCount = 0;
+  // ── Sliding-window stuck detection ──
+  const recentUnits: Array<{ key: string; error?: string }> = [];
+  const STUCK_WINDOW_SIZE = 6;
+  let stuckRecoveryAttempts = 0;
 
   let consecutiveErrors = 0;
 
@@ -628,6 +692,19 @@ export async function autoLoop(
 
     try {
       // ── Blanket try/catch: one bad iteration must not kill the session
+      const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
+
+      // ── Check sidecar queue before deriveState ──
+      let sidecarItem: SidecarItem | undefined;
+      if (s.sidecarQueue.length > 0) {
+        sidecarItem = s.sidecarQueue.shift()!;
+        debugLog("autoLoop", {
+          phase: "sidecar-dequeue",
+          kind: sidecarItem.kind,
+          unitType: sidecarItem.unitType,
+          unitId: sidecarItem.unitId,
+        });
+      }
 
       const sessionLockBase = deps.lockBase();
       if (sessionLockBase) {
@@ -649,6 +726,17 @@ export async function autoLoop(
         }
       }
 
+      // Variables shared between the sidecar and normal paths
+      let unitType: string;
+      let unitId: string;
+      let prompt: string;
+      let pauseAfterUatDispatch = false;
+      let state: GSDState;
+      let mid: string | undefined;
+      let midTitle: string | undefined;
+      let observabilityIssues: unknown[] = [];
+
+      if (!sidecarItem) {
       // ── Phase 1: Pre-dispatch ───────────────────────────────────────────
 
       // Resource version guard
@@ -699,10 +787,10 @@ export async function autoLoop(
       }
 
       // Derive state
-      let state = await deps.deriveState(s.basePath);
-      deps.syncCmuxSidebar(deps.loadEffectiveGSDPreferences()?.preferences, state);
-      let mid = state.activeMilestone?.id;
-      let midTitle = state.activeMilestone?.title;
+      state = await deps.deriveState(s.basePath);
+      deps.syncCmuxSidebar(prefs, state);
+      mid = state.activeMilestone?.id;
+      midTitle = state.activeMilestone?.title;
       debugLog("autoLoop", {
         phase: "state-derived",
         iteration,
@@ -723,12 +811,12 @@ export async function autoLoop(
           "milestone",
         );
         deps.logCmuxEvent(
-          deps.loadEffectiveGSDPreferences()?.preferences,
+          prefs,
           `Milestone ${s.currentMilestoneId} complete. Advancing to ${mid}.`,
           "success",
         );
 
-        const vizPrefs = deps.loadEffectiveGSDPreferences()?.preferences;
+        const vizPrefs = prefs;
         if (vizPrefs?.auto_visualize) {
           ctx.ui.notify("Run /gsd visualize to see progress overview.", "info");
         }
@@ -747,11 +835,30 @@ export async function autoLoop(
         s.unitDispatchCount.clear();
         s.unitRecoveryCount.clear();
         s.unitLifetimeDispatches.clear();
-        lastDerivedUnit = "";
-        sameUnitCount = 0;
+        recentUnits.length = 0;
+        stuckRecoveryAttempts = 0;
 
         // Worktree lifecycle on milestone transition — merge current, enter next
         deps.resolver.mergeAndExit(s.currentMilestoneId!, ctx.ui);
+
+        // Opt-in: create draft PR on milestone completion
+        if (prefs?.git?.auto_pr) {
+          try {
+            const { createDraftPR } = await import("./git-service.js");
+            const prUrl = createDraftPR(
+              s.basePath,
+              s.currentMilestoneId!,
+              `[GSD] ${s.currentMilestoneId} complete`,
+              `Milestone ${s.currentMilestoneId} completed by GSD auto-mode.\n\nSee .gsd/${s.currentMilestoneId}/ for details.`,
+            );
+            if (prUrl) {
+              ctx.ui.notify(`Draft PR created: ${prUrl}`, "info");
+            }
+          } catch {
+            // Non-fatal — PR creation is best-effort
+          }
+        }
+
         deps.invalidateAllCaches();
 
         state = await deps.deriveState(s.basePath);
@@ -761,9 +868,7 @@ export async function autoLoop(
         if (mid) {
           if (deps.getIsolationMode() !== "none") {
             deps.captureIntegrationBranch(s.basePath, mid, {
-              commitDocs:
-                deps.loadEffectiveGSDPreferences()?.preferences?.git
-                  ?.commit_docs,
+              commitDocs: prefs?.git?.commit_docs,
             });
           }
           deps.resolver.enterMilestone(mid, ctx.ui);
@@ -807,6 +912,24 @@ export async function autoLoop(
           // All milestones complete — merge milestone branch before stopping
           if (s.currentMilestoneId) {
             deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+
+            // Opt-in: create draft PR on milestone completion
+            if (prefs?.git?.auto_pr) {
+              try {
+                const { createDraftPR } = await import("./git-service.js");
+                const prUrl = createDraftPR(
+                  s.basePath,
+                  s.currentMilestoneId,
+                  `[GSD] ${s.currentMilestoneId} complete`,
+                  `Milestone ${s.currentMilestoneId} completed by GSD auto-mode.\n\nSee .gsd/${s.currentMilestoneId}/ for details.`,
+                );
+                if (prUrl) {
+                  ctx.ui.notify(`Draft PR created: ${prUrl}`, "info");
+                }
+              } catch {
+                // Non-fatal — PR creation is best-effort
+              }
+            }
           }
           deps.sendDesktopNotification(
             "GSD",
@@ -815,7 +938,7 @@ export async function autoLoop(
             "milestone",
           );
           deps.logCmuxEvent(
-            deps.loadEffectiveGSDPreferences()?.preferences,
+            prefs,
             "All milestones complete.",
             "success",
           );
@@ -837,7 +960,7 @@ export async function autoLoop(
           await deps.stopAuto(ctx, pi, blockerMsg);
           ctx.ui.notify(`${blockerMsg}. Fix and run /gsd auto.`, "warning");
           deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention");
-          deps.logCmuxEvent(deps.loadEffectiveGSDPreferences()?.preferences, blockerMsg, "error");
+          deps.logCmuxEvent(prefs, blockerMsg, "error");
         } else {
           const ids = incomplete.map((m: { id: string }) => m.id).join(", ");
           const diag = `basePath=${s.basePath}, milestones=[${state.registry.map((m: { id: string; status: string }) => `${m.id}:${m.status}`).join(", ")}], phase=${state.phase}`;
@@ -888,6 +1011,24 @@ export async function autoLoop(
         // Milestone merge on complete (before closeout so branch state is clean)
         if (s.currentMilestoneId) {
           deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+
+          // Opt-in: create draft PR on milestone completion
+          if (prefs?.git?.auto_pr) {
+            try {
+              const { createDraftPR } = await import("./git-service.js");
+              const prUrl = createDraftPR(
+                s.basePath,
+                s.currentMilestoneId,
+                `[GSD] ${s.currentMilestoneId} complete`,
+                `Milestone ${s.currentMilestoneId} completed by GSD auto-mode.\n\nSee .gsd/${s.currentMilestoneId}/ for details.`,
+              );
+              if (prUrl) {
+                ctx.ui.notify(`Draft PR created: ${prUrl}`, "info");
+              }
+            } catch {
+              // Non-fatal — PR creation is best-effort
+            }
+          }
         }
         deps.sendDesktopNotification(
           "GSD",
@@ -896,7 +1037,7 @@ export async function autoLoop(
           "milestone",
         );
         deps.logCmuxEvent(
-          deps.loadEffectiveGSDPreferences()?.preferences,
+          prefs,
           `Milestone ${mid} complete.`,
           "success",
         );
@@ -911,14 +1052,12 @@ export async function autoLoop(
         await closeoutAndStop(ctx, pi, s, deps, blockerMsg);
         ctx.ui.notify(`${blockerMsg}. Fix and run /gsd auto.`, "warning");
         deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention");
-        deps.logCmuxEvent(deps.loadEffectiveGSDPreferences()?.preferences, blockerMsg, "error");
+        deps.logCmuxEvent(prefs, blockerMsg, "error");
         debugLog("autoLoop", { phase: "exit", reason: "blocked" });
         break;
       }
 
       // ── Phase 2: Guards ─────────────────────────────────────────────────
-
-      const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
 
       // Budget ceiling guard
       const budgetCeiling = prefs?.budget_ceiling;
@@ -1069,76 +1208,84 @@ export async function autoLoop(
         continue;
       }
 
-      let unitType = dispatchResult.unitType;
-      let unitId = dispatchResult.unitId;
-      let prompt = dispatchResult.prompt;
-      const pauseAfterUatDispatch = dispatchResult.pauseAfterDispatch ?? false;
+      unitType = dispatchResult.unitType;
+      unitId = dispatchResult.unitId;
+      prompt = dispatchResult.prompt;
+      pauseAfterUatDispatch = dispatchResult.pauseAfterDispatch ?? false;
 
-      // ── Same-unit stuck counter with graduated recovery ──
+      // ── Sliding-window stuck detection with graduated recovery ──
       const derivedKey = `${unitType}/${unitId}`;
-      if (derivedKey === lastDerivedUnit && !s.pendingVerificationRetry) {
-        sameUnitCount++;
-        debugLog("autoLoop", {
-          phase: "stuck-check",
-          unitType,
-          unitId,
-          sameUnitCount,
-        });
 
-        if (sameUnitCount === 3) {
-          // Level 1: try verifying the artifact — maybe it was written but not detected
-          const artifactExists = deps.verifyExpectedArtifact(
+      if (!s.pendingVerificationRetry) {
+        recentUnits.push({ key: derivedKey });
+        if (recentUnits.length > STUCK_WINDOW_SIZE) recentUnits.shift();
+
+        const stuckSignal = detectStuck(recentUnits);
+        if (stuckSignal) {
+          debugLog("autoLoop", {
+            phase: "stuck-check",
             unitType,
             unitId,
-            s.basePath,
-          );
-          if (artifactExists) {
-            debugLog("autoLoop", {
-              phase: "stuck-recovery",
-              level: 1,
-              action: "artifact-found",
-            });
+            reason: stuckSignal.reason,
+            recoveryAttempts: stuckRecoveryAttempts,
+          });
+
+          if (stuckRecoveryAttempts === 0) {
+            // Level 1: try verifying the artifact, then cache invalidation + retry
+            stuckRecoveryAttempts++;
+            const artifactExists = deps.verifyExpectedArtifact(
+              unitType,
+              unitId,
+              s.basePath,
+            );
+            if (artifactExists) {
+              debugLog("autoLoop", {
+                phase: "stuck-recovery",
+                level: 1,
+                action: "artifact-found",
+              });
+              ctx.ui.notify(
+                `Stuck recovery: artifact for ${unitType} ${unitId} found on disk. Invalidating caches.`,
+                "info",
+              );
+              deps.invalidateAllCaches();
+              continue;
+            }
             ctx.ui.notify(
-              `Stuck recovery: artifact for ${unitType} ${unitId} found on disk. Invalidating caches.`,
-              "info",
+              `Stuck on ${unitType} ${unitId} (${stuckSignal.reason}). Invalidating caches and retrying.`,
+              "warning",
             );
             deps.invalidateAllCaches();
-            continue;
+          } else {
+            // Level 2: hard stop — genuinely stuck
+            debugLog("autoLoop", {
+              phase: "stuck-detected",
+              unitType,
+              unitId,
+              reason: stuckSignal.reason,
+            });
+            await deps.stopAuto(
+              ctx,
+              pi,
+              `Stuck: ${stuckSignal.reason}`,
+            );
+            ctx.ui.notify(
+              `Stuck on ${unitType} ${unitId} — ${stuckSignal.reason}. The expected artifact was not written.`,
+              "error",
+            );
+            break;
           }
-          ctx.ui.notify(
-            `Stuck on ${unitType} ${unitId} (attempt ${sameUnitCount}). Invalidating caches and retrying.`,
-            "warning",
-          );
-          deps.invalidateAllCaches();
-        } else if (sameUnitCount === 5) {
-          // Level 2: hard stop — genuinely stuck
-          debugLog("autoLoop", {
-            phase: "stuck-detected",
-            unitType,
-            unitId,
-            sameUnitCount,
-          });
-          await deps.stopAuto(
-            ctx,
-            pi,
-            `Stuck: ${unitType} ${unitId} derived ${sameUnitCount} consecutive times without progress`,
-          );
-          ctx.ui.notify(
-            `Stuck on ${unitType} ${unitId} — deriveState returns the same unit after ${sameUnitCount} attempts. The expected artifact was not written.`,
-            "error",
-          );
-          break;
+        } else {
+          // Progress detected — reset recovery counter
+          if (stuckRecoveryAttempts > 0) {
+            debugLog("autoLoop", {
+              phase: "stuck-counter-reset",
+              from: recentUnits[recentUnits.length - 2]?.key ?? "",
+              to: derivedKey,
+            });
+            stuckRecoveryAttempts = 0;
+          }
         }
-      } else {
-        if (derivedKey !== lastDerivedUnit) {
-          debugLog("autoLoop", {
-            phase: "stuck-counter-reset",
-            from: lastDerivedUnit,
-            to: derivedKey,
-          });
-        }
-        lastDerivedUnit = derivedKey;
-        sameUnitCount = 0;
       }
 
       // Pre-dispatch hooks
@@ -1181,12 +1328,26 @@ export async function autoLoop(
         break;
       }
 
-      const observabilityIssues = await deps.collectObservabilityWarnings(
+      observabilityIssues = await deps.collectObservabilityWarnings(
         ctx,
         s.basePath,
         unitType,
         unitId,
       );
+
+      // Derive state for shared use in execution phase
+      // (state, mid, midTitle already set above)
+
+      } else {
+        // ── Sidecar path: use values from the sidecar item directly ──
+        unitType = sidecarItem.unitType;
+        unitId = sidecarItem.unitId;
+        prompt = sidecarItem.prompt;
+        // Derive minimal state for progress widget / execution context
+        state = await deps.deriveState(s.basePath);
+        mid = state.activeMilestone?.id;
+        midTitle = state.activeMilestone?.title;
+      }
 
       // ── Phase 4: Unit execution ─────────────────────────────────────────
 
@@ -1204,61 +1365,6 @@ export async function autoLoop(
         s.currentUnit.id === unitId
       );
       const previousTier = s.currentUnitRouting?.tier;
-
-      // Closeout previous unit
-      if (s.currentUnit) {
-        await deps.closeoutUnit(
-          ctx,
-          s.basePath,
-          s.currentUnit.type,
-          s.currentUnit.id,
-          s.currentUnit.startedAt,
-          deps.buildSnapshotOpts(s.currentUnit.type, s.currentUnit.id),
-        );
-
-        if (s.currentUnitRouting) {
-          const isRetryForOutcome =
-            s.currentUnit.type === unitType && s.currentUnit.id === unitId;
-          deps.recordOutcome(
-            s.currentUnit.type,
-            s.currentUnitRouting.tier as "light" | "standard" | "heavy",
-            !isRetryForOutcome,
-          );
-        }
-
-        const closeoutKey = `${s.currentUnit.type}/${s.currentUnit.id}`;
-        const incomingKey = `${unitType}/${unitId}`;
-        const isHookUnit = s.currentUnit.type.startsWith("hook/");
-        const artifactVerified =
-          isHookUnit ||
-          deps.verifyExpectedArtifact(
-            s.currentUnit.type,
-            s.currentUnit.id,
-            s.basePath,
-          );
-        if (closeoutKey !== incomingKey && artifactVerified) {
-          s.completedUnits.push({
-            type: s.currentUnit.type,
-            id: s.currentUnit.id,
-            startedAt: s.currentUnit.startedAt,
-            finishedAt: Date.now(),
-          });
-          if (s.completedUnits.length > 200) {
-            s.completedUnits = s.completedUnits.slice(-200);
-          }
-          deps.clearUnitRuntimeRecord(
-            s.basePath,
-            s.currentUnit.type,
-            s.currentUnit.id,
-          );
-          s.unitDispatchCount.delete(
-            `${s.currentUnit.type}/${s.currentUnit.id}`,
-          );
-          s.unitRecoveryCount.delete(
-            `${s.currentUnit.type}/${s.currentUnit.id}`,
-          );
-        }
-      }
 
       s.currentUnit = { type: unitType, id: unitId, startedAt: Date.now() };
       deps.captureAvailableSkills();
@@ -1286,7 +1392,6 @@ export async function autoLoop(
       deps.ensurePreconditions(unitType, unitId, s.basePath, state);
 
       // Prompt injection
-      const MAX_RECOVERY_CHARS = 50_000;
       let finalPrompt = prompt;
 
       if (s.pendingVerificationRetry) {
@@ -1331,7 +1436,7 @@ export async function autoLoop(
       s.lastBaselineCharCount = undefined;
       if (deps.isDbAvailable()) {
         try {
-          const { inlineGsdRootFile } = await import("./auto-prompts.js");
+          const { inlineGsdRootFile } = await importExtensionModule<typeof import("./auto-prompts.js")>(import.meta.url, "./auto-prompts.js");
           const [decisionsContent, requirementsContent, projectContent] =
             await Promise.all([
               inlineGsdRootFile(s.basePath, "decisions.md", "Decisions"),
@@ -1358,7 +1463,7 @@ export async function autoLoop(
         );
       }
 
-      // Select and apply model (with tier escalation on retry)
+      // Select and apply model (with tier escalation on retry — normal units only)
       const modelResult = await deps.selectAndApplyModel(
         ctx,
         pi,
@@ -1368,7 +1473,7 @@ export async function autoLoop(
         prefs,
         s.verbose,
         s.autoModeStartModel,
-        { isRetry, previousTier },
+        sidecarItem ? undefined : { isRetry, previousTier },
       );
       s.currentUnitRouting =
         modelResult.routing as AutoSession["currentUnitRouting"];
@@ -1426,6 +1531,23 @@ export async function autoLoop(
         status: unitResult.status,
       });
 
+      // Tag the most recent window entry with error info for stuck detection
+      if (unitResult.status === "error" || unitResult.status === "cancelled") {
+        const lastEntry = recentUnits[recentUnits.length - 1];
+        if (lastEntry) {
+          lastEntry.error = `${unitResult.status}:${unitType}/${unitId}`;
+        }
+      } else if (unitResult.event?.messages?.length) {
+        const lastMsg = unitResult.event.messages[unitResult.event.messages.length - 1];
+        const msgStr = typeof lastMsg === "string" ? lastMsg : JSON.stringify(lastMsg);
+        if (/error|fail|exception/i.test(msgStr)) {
+          const lastEntry = recentUnits[recentUnits.length - 1];
+          if (lastEntry) {
+            lastEntry.error = msgStr.slice(0, 200);
+          }
+        }
+      }
+
       if (unitResult.status === "cancelled") {
         ctx.ui.notify(
           `Session creation timed out or was cancelled for ${unitType} ${unitId}. Will retry.`,
@@ -1434,6 +1556,52 @@ export async function autoLoop(
         await deps.stopAuto(ctx, pi, "Session creation failed");
         debugLog("autoLoop", { phase: "exit", reason: "session-failed" });
         break;
+      }
+
+      // ── Immediate unit closeout (metrics, activity log, memory) ────────
+      // Run right after runUnit() returns so telemetry is never lost to a
+      // crash between iterations.
+      await deps.closeoutUnit(
+        ctx,
+        s.basePath,
+        unitType,
+        unitId,
+        s.currentUnit.startedAt,
+        deps.buildSnapshotOpts(unitType, unitId),
+      );
+
+      if (s.currentUnitRouting) {
+        deps.recordOutcome(
+          unitType,
+          s.currentUnitRouting.tier as "light" | "standard" | "heavy",
+          true, // success assumed; dispatch will re-dispatch if artifact missing
+        );
+      }
+
+      const isHookUnit = unitType.startsWith("hook/");
+      const artifactVerified =
+        isHookUnit ||
+        deps.verifyExpectedArtifact(unitType, unitId, s.basePath);
+      if (artifactVerified) {
+        s.completedUnits.push({
+          type: unitType,
+          id: unitId,
+          startedAt: s.currentUnit.startedAt,
+          finishedAt: Date.now(),
+        });
+        if (s.completedUnits.length > 200) {
+          s.completedUnits = s.completedUnits.slice(-200);
+        }
+        // Flush completed-units to disk so the record survives crashes
+        try {
+          const completedKeysPath = join(gsdRoot(s.basePath), "completed-units.json");
+          const keys = s.completedUnits.map((u) => `${u.type}/${u.id}`);
+          atomicWriteSync(completedKeysPath, JSON.stringify(keys, null, 2));
+        } catch { /* non-fatal: disk flush failure */ }
+
+        deps.clearUnitRuntimeRecord(s.basePath, unitType, unitId);
+        s.unitDispatchCount.delete(`${unitType}/${unitId}`);
+        s.unitRecoveryCount.delete(`${unitType}/${unitId}`);
       }
 
       // ── Phase 5: Finalize ───────────────────────────────────────────────
@@ -1456,7 +1624,13 @@ export async function autoLoop(
       };
 
       // Pre-verification processing (commit, doctor, state rebuild, etc.)
-      const preResult = await deps.postUnitPreVerification(postUnitCtx);
+      // Sidecar items use lightweight pre-verification opts
+      const preVerificationOpts: PreVerificationOpts | undefined = sidecarItem
+        ? sidecarItem.kind === "hook"
+          ? { skipSettleDelay: true, skipDoctor: true, skipStateRebuild: true, skipWorktreeSync: true }
+          : { skipSettleDelay: true, skipStateRebuild: true }
+        : undefined;
+      const preResult = await deps.postUnitPreVerification(postUnitCtx, preVerificationOpts);
       if (preResult === "dispatched") {
         debugLog("autoLoop", {
           phase: "exit",
@@ -1475,22 +1649,32 @@ export async function autoLoop(
         break;
       }
 
-      // Verification gate — the loop handles retries via s.pendingVerificationRetry
-      const verificationResult = await deps.runPostUnitVerification(
-        { s, ctx, pi },
-        deps.pauseAuto,
-      );
+      // Verification gate
+      // Hook sidecar items skip verification entirely.
+      // Non-hook sidecar items run verification but skip retries (just continue).
+      const skipVerification = sidecarItem?.kind === "hook";
+      if (!skipVerification) {
+        const verificationResult = await deps.runPostUnitVerification(
+          { s, ctx, pi },
+          deps.pauseAuto,
+        );
 
-      if (verificationResult === "pause") {
-        debugLog("autoLoop", { phase: "exit", reason: "verification-pause" });
-        break;
-      }
+        if (verificationResult === "pause") {
+          debugLog("autoLoop", { phase: "exit", reason: "verification-pause" });
+          break;
+        }
 
-      if (verificationResult === "retry") {
-        // s.pendingVerificationRetry was set by runPostUnitVerification.
-        // Continue the loop — next iteration will inject the retry context into the prompt.
-        debugLog("autoLoop", { phase: "verification-retry", iteration });
-        continue;
+        if (verificationResult === "retry") {
+          if (sidecarItem) {
+            // Sidecar verification retries are skipped — just continue
+            debugLog("autoLoop", { phase: "sidecar-verification-retry-skipped", iteration });
+          } else {
+            // s.pendingVerificationRetry was set by runPostUnitVerification.
+            // Continue the loop — next iteration will inject the retry context into the prompt.
+            debugLog("autoLoop", { phase: "verification-retry", iteration });
+            continue;
+          }
+        }
       }
 
       // Post-verification processing (DB dual-write, hooks, triage, quick-tasks)
@@ -1509,152 +1693,6 @@ export async function autoLoop(
         debugLog("autoLoop", { phase: "exit", reason: "step-wizard" });
         break;
       }
-
-      // ── Sidecar drain: dispatch enqueued hooks/triage/quick-tasks ──
-      let sidecarBroke = false;
-      while (s.sidecarQueue.length > 0 && s.active) {
-        const item = s.sidecarQueue.shift()!;
-        debugLog("autoLoop", {
-          phase: "sidecar-dequeue",
-          kind: item.kind,
-          unitType: item.unitType,
-          unitId: item.unitId,
-        });
-
-        // Set up as current unit
-        const sidecarStartedAt = Date.now();
-        s.currentUnit = {
-          type: item.unitType,
-          id: item.unitId,
-          startedAt: sidecarStartedAt,
-        };
-        deps.writeUnitRuntimeRecord(
-          s.basePath,
-          item.unitType,
-          item.unitId,
-          sidecarStartedAt,
-          {
-            phase: "dispatched",
-            wrapupWarningSent: false,
-            timeoutAt: null,
-            lastProgressAt: sidecarStartedAt,
-            progressCount: 0,
-            lastProgressKind: "dispatch",
-          },
-        );
-
-        // Model selection (handles hook model override)
-        await deps.selectAndApplyModel(
-          ctx,
-          pi,
-          item.unitType,
-          item.unitId,
-          s.basePath,
-          prefs,
-          s.verbose,
-          s.autoModeStartModel,
-        );
-
-        // Supervision
-        deps.clearUnitTimeout();
-        deps.startUnitSupervision({
-          s,
-          ctx,
-          pi,
-          unitType: item.unitType,
-          unitId: item.unitId,
-          prefs,
-          buildSnapshotOpts: () =>
-            deps.buildSnapshotOpts(item.unitType, item.unitId),
-          buildRecoveryContext: () => ({}),
-          pauseAuto: deps.pauseAuto,
-        });
-
-        // Write lock
-        const sidecarSessionFile = deps.getSessionFile(ctx);
-        deps.writeLock(
-          deps.lockBase(),
-          item.unitType,
-          item.unitId,
-          s.completedUnits.length,
-          sidecarSessionFile,
-        );
-
-        // Execute via standard runUnit
-        const sidecarResult = await runUnit(
-          ctx,
-          pi,
-          s,
-          item.unitType,
-          item.unitId,
-          item.prompt,
-        );
-        deps.clearUnitTimeout();
-
-        if (sidecarResult.status === "cancelled") {
-          ctx.ui.notify(
-            `Sidecar unit ${item.unitType} ${item.unitId} session cancelled. Stopping.`,
-            "warning",
-          );
-          await deps.stopAuto(ctx, pi, "Sidecar session creation failed");
-          sidecarBroke = true;
-          break;
-        }
-
-        // Run pre-verification for the sidecar unit (lightweight path)
-        const sidecarPreOpts: PreVerificationOpts = item.kind === "hook"
-          ? { skipSettleDelay: true, skipDoctor: true, skipStateRebuild: true, skipWorktreeSync: true }
-          : { skipSettleDelay: true, skipStateRebuild: true };
-        const sidecarPreResult =
-          await deps.postUnitPreVerification(postUnitCtx, sidecarPreOpts);
-        if (sidecarPreResult === "dispatched") {
-          // Pre-verification caused stop/pause
-          debugLog("autoLoop", {
-            phase: "exit",
-            reason: "sidecar-pre-verification-stop",
-          });
-          sidecarBroke = true;
-          break;
-        }
-
-        // Verification gate for non-hook sidecar units (triage, quick-tasks)
-        // Hook units are lightweight and don't need verification.
-        if (item.kind !== "hook") {
-          const sidecarVerification = await deps.runPostUnitVerification(
-            { s, ctx, pi },
-            deps.pauseAuto,
-          );
-          if (sidecarVerification === "pause") {
-            debugLog("autoLoop", {
-              phase: "exit",
-              reason: "sidecar-verification-pause",
-            });
-            sidecarBroke = true;
-            break;
-          }
-          // "retry" for sidecars — skip retry, just continue (sidecar retries are not worth the complexity)
-        }
-
-        // Post-verification (may enqueue more sidecar items)
-        const sidecarPostResult =
-          await deps.postUnitPostVerification(postUnitCtx);
-        if (sidecarPostResult === "stopped") {
-          debugLog("autoLoop", { phase: "exit", reason: "sidecar-stopped" });
-          sidecarBroke = true;
-          break;
-        }
-        if (sidecarPostResult === "step-wizard") {
-          debugLog("autoLoop", {
-            phase: "exit",
-            reason: "sidecar-step-wizard",
-          });
-          sidecarBroke = true;
-          break;
-        }
-        // "continue" — loop checks sidecarQueue again
-      }
-
-      if (sidecarBroke) break;
 
       consecutiveErrors = 0; // Iteration completed successfully
       debugLog("autoLoop", { phase: "iteration-complete", iteration });

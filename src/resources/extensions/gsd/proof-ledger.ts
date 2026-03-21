@@ -10,7 +10,7 @@
 
 import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path"
-import { atomicWriteSync } from "./atomic-write.ts"
+import { atomicWriteSync } from "./atomic-write.js"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
