@@ -28,7 +28,7 @@ export const TOOL_KEYS = [
  */
 export function loadToolApiKeys(): void {
   try {
-    const authPath = join(process.env.HOME ?? "", ".gsd", "agent", "auth.json");
+    const authPath = join(process.env.GSD_HOME || join(process.env.HOME ?? "", ".gsdev"), "agent", "auth.json");
     if (!existsSync(authPath)) return;
 
     const auth = AuthStorage.create(authPath);
@@ -44,7 +44,7 @@ export function loadToolApiKeys(): void {
 }
 
 export function getConfigAuthStorage(): AuthStorage {
-  const authPath = join(process.env.HOME ?? "", ".gsd", "agent", "auth.json");
+  const authPath = join(process.env.GSD_HOME || join(process.env.HOME ?? "", ".gsdev"), "agent", "auth.json");
   mkdirSync(dirname(authPath), { recursive: true });
   return AuthStorage.create(authPath);
 }

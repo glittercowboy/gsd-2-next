@@ -34,6 +34,14 @@ import { showConfirm } from "../shared/mod.js";
 import { debugLog } from "./debug-logger.js";
 import { findMilestoneIds, nextMilestoneId } from "./milestone-ids.js";
 import { parkMilestone, discardMilestone } from "./milestone-actions.js";
+import {
+  assembleExecuteTaskPrompt,
+  assembleCompleteSlicePrompt,
+  assemblePlanSlicePrompt,
+  assemblePlanMilestonePrompt,
+  assembleResearchSlicePrompt,
+  assembleResumeTaskPrompt,
+} from "./execution-contract.js";
 import { resolveModelWithFallbacksForUnit } from "./preferences-models.js";
 
 // ─── Re-exports (preserve public API for existing importers) ────────────────
@@ -225,7 +233,7 @@ async function dispatchWorkflow(
     }
   }
 
-  const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".gsd", "agent", "GSD-WORKFLOW.md");
+  const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.GSD_HOME || join(process.env.HOME ?? "~", ".gsdev"), "agent", "GSD-WORKFLOW.md");
   const workflow = readFileSync(workflowPath, "utf-8");
 
   pi.sendMessage(
@@ -1116,16 +1124,7 @@ export async function showSmartEntry(
 
       if (choice === "plan") {
         pendingAutoStart = { ctx, pi, basePath, milestoneId, step: stepMode };
-        const planMilestoneTemplates = [
-          inlineTemplate("roadmap", "Roadmap"),
-          inlineTemplate("plan", "Slice Plan"),
-          inlineTemplate("task-plan", "Task Plan"),
-          inlineTemplate("secrets-manifest", "Secrets Manifest"),
-        ].join("\n\n---\n\n");
-        const secretsOutputPath = relMilestoneFile(basePath, milestoneId, "SECRETS");
-        await dispatchWorkflow(pi, loadPrompt("guided-plan-milestone", {
-          milestoneId, milestoneTitle, secretsOutputPath, inlinedTemplates: planMilestoneTemplates,
-        }), "gsd-run", ctx, "plan-milestone");
+        await dispatchWorkflow(pi, await assemblePlanMilestonePrompt(milestoneId, milestoneTitle, basePath, 'guided'), "gsd-run", ctx, "plan-milestone");
       } else if (choice === "discuss") {
         const discussMilestoneTemplates = inlineTemplate("context", "Context");
         const structuredQuestionsAvailable = pi.getActiveTools().includes("ask_user_questions") ? "true" : "false";
@@ -1249,20 +1248,11 @@ export async function showSmartEntry(
     });
 
     if (choice === "plan") {
-      const planSliceTemplates = [
-        inlineTemplate("plan", "Slice Plan"),
-        inlineTemplate("task-plan", "Task Plan"),
-      ].join("\n\n---\n\n");
-      await dispatchWorkflow(pi, loadPrompt("guided-plan-slice", {
-        milestoneId, sliceId, sliceTitle, inlinedTemplates: planSliceTemplates,
-      }), "gsd-run", ctx, "plan-slice");
+      await dispatchWorkflow(pi, await assemblePlanSlicePrompt(milestoneId, milestoneTitle, sliceId, sliceTitle, basePath, 'guided'), "gsd-run", ctx, "plan-slice");
     } else if (choice === "discuss") {
       await dispatchWorkflow(pi, await buildDiscussSlicePrompt(milestoneId, sliceId, sliceTitle, basePath, { rediscuss: hasContext }), "gsd-run", ctx, "plan-slice");
     } else if (choice === "research") {
-      const researchTemplates = inlineTemplate("research", "Research");
-      await dispatchWorkflow(pi, loadPrompt("guided-research-slice", {
-        milestoneId, sliceId, sliceTitle, inlinedTemplates: researchTemplates,
-      }), "gsd-run", ctx, "research-slice");
+      await dispatchWorkflow(pi, await assembleResearchSlicePrompt(milestoneId, milestoneTitle, sliceId, sliceTitle, basePath, 'guided'), "gsd-run", ctx, "research-slice");
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");
       await fireStatusViaCommand(ctx);
@@ -1300,13 +1290,7 @@ export async function showSmartEntry(
     });
 
     if (choice === "complete") {
-      const completeSliceTemplates = [
-        inlineTemplate("slice-summary", "Slice Summary"),
-        inlineTemplate("uat", "UAT"),
-      ].join("\n\n---\n\n");
-      await dispatchWorkflow(pi, loadPrompt("guided-complete-slice", {
-        workingDirectory: basePath, milestoneId, sliceId, sliceTitle, inlinedTemplates: completeSliceTemplates,
-      }), "gsd-run", ctx, "complete-slice");
+      await dispatchWorkflow(pi, await assembleCompleteSlicePrompt(milestoneId, milestoneTitle, sliceId, sliceTitle, basePath, 'guided'), "gsd-run", ctx, "complete-slice");
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");
       await fireStatusViaCommand(ctx);
@@ -1369,14 +1353,9 @@ export async function showSmartEntry(
 
     if (choice === "execute") {
       if (hasInterrupted) {
-        await dispatchWorkflow(pi, loadPrompt("guided-resume-task", {
-          milestoneId, sliceId,
-        }), "gsd-run", ctx, "execute-task");
+        await dispatchWorkflow(pi, await assembleResumeTaskPrompt(milestoneId, sliceId, sliceTitle, taskId, taskTitle, basePath, 'guided'), "gsd-run", ctx, "execute-task");
       } else {
-        const executeTaskTemplates = inlineTemplate("task-summary", "Task Summary");
-        await dispatchWorkflow(pi, loadPrompt("guided-execute-task", {
-          milestoneId, sliceId, taskId, taskTitle, inlinedTemplates: executeTaskTemplates,
-        }), "gsd-run", ctx, "execute-task");
+        await dispatchWorkflow(pi, await assembleExecuteTaskPrompt(milestoneId, sliceId, sliceTitle, taskId, taskTitle, basePath, 'guided'), "gsd-run", ctx, "execute-task");
       }
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");

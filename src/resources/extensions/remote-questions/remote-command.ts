@@ -300,7 +300,7 @@ async function promptSlackChannelId(ctx: ExtensionCommandContext): Promise<strin
 }
 
 function getAuthStorage(): AuthStorage {
-  const authPath = join(process.env.HOME ?? "", ".gsd", "agent", "auth.json");
+  const authPath = join(process.env.GSD_HOME || join(process.env.HOME ?? "", ".gsdev"), "agent", "auth.json");
   mkdirSync(dirname(authPath), { recursive: true });
   return AuthStorage.create(authPath);
 }

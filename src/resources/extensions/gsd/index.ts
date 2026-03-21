@@ -61,7 +61,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { shortcutDesc } from "../shared/mod.js";
 
-const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsdev");
 import { Text } from "@gsd/pi-tui";
 import { pauseAutoForProviderError, classifyProviderError } from "./provider-error-pause.js";
 import { toPosixPath } from "../shared/mod.js";

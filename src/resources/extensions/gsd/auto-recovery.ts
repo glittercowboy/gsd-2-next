@@ -47,6 +47,13 @@ import {
   unlinkSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+  validateTaskSummary,
+  validateSlicePlan,
+  validateUatResult,
+  validateReassessment,
+  validateMilestoneSummary,
+} from "./artifact-validator.js";
 
 // ─── Artifact Resolution & Verification ───────────────────────────────────────
 
@@ -226,6 +233,10 @@ export function verifyExpectedArtifact(
         if (!re.test(planContent)) return false;
       }
     }
+    // Content validation: task summary must have required frontmatter fields
+    const summaryContent = readFileSync(absPath, "utf-8");
+    const taskResult = validateTaskSummary(summaryContent);
+    if (!taskResult.valid) return false;
   }
 
   // plan-slice must also produce individual task plan files for every task listed
@@ -247,6 +258,9 @@ export function verifyExpectedArtifact(
             if (!existsSync(taskPlanFile)) return false;
           }
         }
+        // Content validation: plan must have Must-Haves and real task entries
+        const planResult = validateSlicePlan(planContent);
+        if (!planResult.valid) return false;
       } catch {
         // Parse failure — don't block; slice plan may have non-standard format
       }
@@ -285,6 +299,27 @@ export function verifyExpectedArtifact(
         }
       }
     }
+  }
+
+  // Content validation for run-uat: UAT result must have verdict and checks
+  if (unitType === "run-uat") {
+    const uatContent = readFileSync(absPath, "utf-8");
+    const uatResult = validateUatResult(uatContent);
+    if (!uatResult.valid) return false;
+  }
+
+  // Content validation for reassess-roadmap: must have meaningful body content
+  if (unitType === "reassess-roadmap") {
+    const assessContent = readFileSync(absPath, "utf-8");
+    const assessResult = validateReassessment(assessContent);
+    if (!assessResult.valid) return false;
+  }
+
+  // Content validation for complete-milestone: must have verification_result and provides
+  if (unitType === "complete-milestone") {
+    const msContent = readFileSync(absPath, "utf-8");
+    const msResult = validateMilestoneSummary(msContent);
+    if (!msResult.valid) return false;
   }
 
   return true;

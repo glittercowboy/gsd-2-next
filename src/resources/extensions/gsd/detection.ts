@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { gsdRoot } from "./paths.js";
 
-const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsdev");
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 

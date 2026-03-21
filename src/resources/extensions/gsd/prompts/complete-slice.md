@@ -13,7 +13,7 @@ Then:
 2. Run the slice-level verification checks from the slice plan. All must pass before marking the slice done. If any fail, fix them first.
 3. If the slice plan defines observability or diagnostic surfaces, confirm they work.
 4. If `.gsd/REQUIREMENTS.md` exists, update it only where the slice actually proved a requirement state change.
-5. Write `{{sliceSummaryPath}}`, compressing the task summaries into what the slice truly delivered, what patterns it established, and what future work should watch out for.
+5. Write `{{sliceSummaryPath}}`, compressing the task summaries into what the slice truly delivered, what patterns it established, and what future work should watch out for. If a **Pre-Computed Aggregation** section is inlined above, use its deduplicated values for frontmatter fields.
 6. Write `{{sliceUatPath}}` as a concrete UAT script tailored to what this slice actually built.
 7. Append missing significant decisions from task summaries to `.gsd/DECISIONS.md`.
 8. Append only genuinely useful non-obvious lessons to `.gsd/KNOWLEDGE.md`.
