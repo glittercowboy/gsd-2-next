@@ -1,0 +1,4 @@
+results.tsv
+*.log
+candidate.preferences.md
+fixture/
